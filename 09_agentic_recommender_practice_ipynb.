@@ -1,0 +1,274 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/ywertoo/machine-learning-practice/blob/main/09_agentic_recommender_practice_ipynb.\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "qCQOPekZ55Kj"
+      },
+      "source": [
+        "# 에이전트 AI 기반 추천 시스템\n",
+        "\n",
+        "## 1. 최신 추천 시스템 동향 소개\n",
+        "- 기존 추천 시스템의 한계\n",
+        "  - 협업 필터링(CF) 및 행렬 분해(MF) 등 전통적 기법은 행렬 형태의 평점 데이터나 클릭 로그에만 의존\n",
+        "  - 사용자의 복잡한 자연어 맥락이나 실시간으로 변하는 의도를 정밀하게 반영하기 어려움\n",
+        "  \n",
+        "  \n",
+        "- 에이전트 AI기반 추천 시스템 등장\n",
+        "  - 최근 추천 시스템의 SOTA는 LLM과 자율 에이전트 워크플로우를 접목하는 방향으로 진화중\n",
+        "  - 에이전트가 사용자의 모호한 요청을 받으면 스스로 계획을 세우고, 필요한 도구를 호출하여 최적 결과 도출"
+      ],
+      "id": "qCQOPekZ55Kj"
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "HbxhoW5755Kl"
+      },
+      "source": [
+        "## 2. 환경 설정 및 데이터베이스 구축\n",
+        "- 아이템 데이터베이스 정의\n",
+        "  - 에이전트가 탐색할 영화 데이터베이스 구축\n",
+        "  - 단순한 장르 표기를 넘어 에이전트가 텍스트 분석을 통해 판단할 수 있도록 상세 리뷰 및 키워드를 포함함\n",
+        "  \n",
+        "- **에이전트가 사용할 도구(Tools) 구현**\n",
+        "  - `search_by_genre`: 특정 장르의 영화를 필터링하는 도구\n",
+        "  - `analyze_reviews`: 사용자의 감성이나 특정 분위기 요구사항이 리뷰 데이터에 포함되어 있는지 검증하는 도구"
+      ],
+      "id": "HbxhoW5755Kl"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "X-udA8ee55Kl",
+        "outputId": "4e05204c-6314-4b0e-e85a-a300e2a96cc3"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Tools and Database initialized successfully!\n"
+          ]
+        }
+      ],
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "\n",
+        "# 1. Define sample movie database (Item Pool)\n",
+        "movie_db = [\n",
+        "    {\"title\": \"La La Land\", \"genre\": \"Romance\", \"reviews\": \"Beautiful music, romantic but slightly bittersweet ending, perfect for quiet night.\", \"rating\": 4.5},\n",
+        "    {\"title\": \"About Time\", \"genre\": \"Romance\", \"reviews\": \"Warm and emotional time-travel story about family and true love.\", \"rating\": 4.7},\n",
+        "    {\"title\": \"Interstellar\", \"genre\": \"Sci-Fi\", \"reviews\": \"Mind-bending space exploration, cosmic mystery, deeply emotional father-daughter bond.\", \"rating\": 4.8},\n",
+        "    {\"title\": \"Inception\", \"genre\": \"Sci-Fi\", \"reviews\": \"Intense action, dream architecture, complex plot, highly intellectual thriller.\", \"rating\": 4.6},\n",
+        "    {\"title\": \"The Conjuring\", \"genre\": \"Horror\", \"reviews\": \"Terrifying atmosphere, jump scares, classic haunted house mystery.\", \"rating\": 4.2},\n",
+        "    {\"title\": \"Get Out\", \"genre\": \"Horror\", \"reviews\": \"Social satire combined with psychological tension, mysterious and suspenseful.\", \"rating\": 4.4}\n",
+        "]\n",
+        "df_movies = pd.DataFrame(movie_db)\n",
+        "\n",
+        "# 2. Tool 1: Genre filtering tool\n",
+        "def search_by_genre(genre_query):\n",
+        "    \"\"\"Filters movies that exactly match the requested genre.\"\"\"\n",
+        "    return df_movies[df_movies['genre'].str.lower() == genre_query.lower()]\n",
+        "\n",
+        "# 3. Tool 2: Review keyword analysis tool\n",
+        "def analyze_reviews(sub_df, keyword):\n",
+        "    \"\"\"Searches for specific semantic keywords within movie reviews.\"\"\"\n",
+        "    return sub_df[sub_df['reviews'].str.lower().str.contains(keyword.lower())]\n",
+        "\n",
+        "print(\"Tools and Database initialized successfully!\")"
+      ],
+      "id": "X-udA8ee55Kl"
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "LIN2jvQZ55Km"
+      },
+      "source": [
+        "## 3. 추천 에이전트  로직 구현\n",
+        "- **에이전트의 3단계 워크플로우**\n",
+        "  - 1단계 Planning : 사용자의 모호한 자연어 요청에서 핵심 장르와 원하는 '분위기 키워드'를 스스로 분리 추출\n",
+        "  - 2단계 Tool Calling : 1단계에서 세운 계획에 따라 `search_by_genre`와 `analyze_reviews` 도구를 순차적으로 호출\n",
+        "  - 3단계 최종 추천 사유 생성 : 필터링된 결과 중 평점이 가장 높은 최적의 아이템을 선정하고 추천 이유를 자연어 형태로 출력"
+      ],
+      "id": "LIN2jvQZ55Km"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "w5lEOk9755Kn"
+      },
+      "outputs": [],
+      "source": [
+        "class RecommenderAgent:\n",
+        "    def __init__(self, database):\n",
+        "        self.db = database\n",
+        "\n",
+        "    def run(self, user_request):\n",
+        "        print(f\"[User Request]: '{user_request}'\\n\")\n",
+        "\n",
+        "        # --- Step 1: Planning & Parsing (Simulating LLM Understanding) ---\n",
+        "        # Agent autonomously extracts structural requirements from unstructured text\n",
+        "        extracted_genre = None\n",
+        "        extracted_keyword = None\n",
+        "\n",
+        "        if \"우주\" in user_request or \"sf\" in user_request.lower():\n",
+        "            extracted_genre = \"Sci-Fi\"\n",
+        "        elif \"로맨스\" in user_request or \"사랑\" in user_request:\n",
+        "            extracted_genre = \"Romance\"\n",
+        "        elif \"무서운\" in user_request or \"공포\" in user_request:\n",
+        "            extracted_genre = \"Horror\"\n",
+        "\n",
+        "        if \"감동\" in user_request or \"family\" in user_request or \"가족\" in user_request:\n",
+        "            extracted_keyword = \"family\"\n",
+        "        elif \"지적\" in user_request or \"어려운\" in user_request or \"complex\" in user_request:\n",
+        "            extracted_keyword = \"complex\"\n",
+        "        elif \"잔잔한\" in user_request or \"quiet\" in user_request:\n",
+        "            extracted_keyword = \"quiet\"\n",
+        "\n",
+        "        print(f\"[Step 1: Planning] Agent parsed parameters -> Genre: {extracted_genre}, Vibe: {extracted_keyword}\")\n",
+        "\n",
+        "        # --- Step 2: Tool Calling ---\n",
+        "        # Call Tool 1: Initial filtering\n",
+        "        if extracted_genre:\n",
+        "            candidates = search_by_genre(extracted_genre)\n",
+        "            print(f\"[Step 2-1: Tool Call] Filtered by genre. Found {len(candidates)} candidates.\")\n",
+        "        else:\n",
+        "            candidates = self.db\n",
+        "\n",
+        "        # Call Tool 2: Deep review contextual analysis\n",
+        "        if extracted_keyword and not candidates.empty:\n",
+        "            candidates = analyze_reviews(candidates, extracted_keyword)\n",
+        "            print(f\"[Step 2-2: Tool Call] Filtered by review sentiment/vibe. Found {len(candidates)} candidates.\")\n",
+        "\n",
+        "        # --- Step 3: Final Selection & Reasoning ---\n",
+        "        if candidates.empty:\n",
+        "            return \"[Agent Output]: 죄송합니다. 요청하신 조건에 맞는 최적의 추천 아이템을 찾지 못했습니다.\"\n",
+        "\n",
+        "        # Select the best item based on rating among qualified candidates\n",
+        "        best_item = candidates.sort_values(by='rating', ascending=False).iloc[0]\n",
+        "\n",
+        "        output_message = (\n",
+        "            f\"[Agent Output: Recommendation Result]\\n\"\n",
+        "            f\"- 추천 시스템이 선정한 최적의 아이템: {best_item['title']}\\n\"\n",
+        "            f\"- 선정 이유: 이 영화는 고객님이 원하신 {extracted_genre} 장르에 속하며, \"\n",
+        "            f\"리뷰 분석 결과 '{best_item['reviews']}'라는 특징을 가지고 있어 요구사항에 가장 부합 (평점: {best_item['rating']})\"\n",
+        "        )\n",
+        "        return output_message\n",
+        "\n",
+        "# Instantiate the agent\n",
+        "agent = RecommenderAgent(df_movies)"
+      ],
+      "id": "w5lEOk9755Kn"
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "NKBrEXZf55Kn"
+      },
+      "source": [
+        "## 4. 에이전트 기반 추천 실행 및 결과 확인\n",
+        "- **테스트 시나리오 수행**\n",
+        "  - 사용자가 자연어로 \"가족들과 함께 볼 수 있는 감동적인 로맨스 영화를 골라줘\"라고 복잡한 맥락의 요청을 보냄\n",
+        "  - 에이전트가 중간에 도구들을 적절히 조합하여 최종 결론과 인간이 이해할 수 있는 추천 사유를 도출하는지 확인"
+      ],
+      "id": "NKBrEXZf55Kn"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "LRsN_rNM55Kn",
+        "outputId": "c6318a1d-b185-434c-c116-853ea6335f7f"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "[User Request]: '가족들과 함께 볼 수 있는 따뜻하고 감동적인 로맨스 영화를 골라줘'\n",
+            "\n",
+            "[Step 1: Planning] Agent parsed parameters -> Genre: Romance, Vibe: family\n",
+            "[Step 2-1: Tool Call] Filtered by genre. Found 2 candidates.\n",
+            "[Step 2-2: Tool Call] Filtered by review sentiment/vibe. Found 1 candidates.\n",
+            "\n",
+            "[Agent Output: Recommendation Result]\n",
+            "- 추천 시스템이 선정한 최적의 아이템: About Time\n",
+            "- 선정 이유: 이 영화는 고객님이 원하신 Romance 장르에 속하며, 리뷰 분석 결과 'Warm and emotional time-travel story about family and true love.'라는 특징을 가지고 있어 요구사항에 가장 부합 (평점: 4.7)\n"
+          ]
+        }
+      ],
+      "source": [
+        "# Run the system with a complex, natural language request\n",
+        "user_query = \"가족들과 함께 볼 수 있는 따뜻하고 감동적인 로맨스 영화를 골라줘\"\n",
+        "response = agent.run(user_query)\n",
+        "print(\"\\n\" + response)"
+      ],
+      "id": "LRsN_rNM55Kn"
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "qly21Bng55Kn"
+      },
+      "source": [
+        "## 5. 확인 문제\n",
+        "\n",
+        "문제 1. 전통적인 추천 기법과 비교했을 때, 본 실습의 에이전트 기반 추천 시스템이 가지는 핵심적인 장점과 차이점은 무엇인지 적기\n",
+        "\n",
+        "전통적인 추천시스템은 사용자 데이터만 기반으로 추천하지만 에이전트 기반 추천 시스템은 사용자의 요청을 이해하고 여러 정보를 활용해 더 맞춤형 추천을 제공한다.\n",
+        "\n",
+        "문제 2. 코드 빈칸 채우기\n",
+        "- 사용자가 \"지적이고 구조가 복잡한 SF 영화를 추천해줘\"라고 요청했을 때, 위 에이전트가 코드 내부적으로 `extracted_genre`와 `extracted_keyword`를 각각 어떤 값으로 추출하게 될까?\n",
+        "  - `extracted_genre` = [Sci-Fi]\n",
+        "  - `extracted_keyword` = [complex]"
+      ],
+      "id": "qly21Bng55Kn"
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "colab",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.12.12"
+    },
+    "colab": {
+      "provenance": [],
+      "include_colab_link": true
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
